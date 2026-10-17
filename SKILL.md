@@ -1,109 +1,75 @@
 ---
 name: workbuddy-checkin
-description: WorkBuddy Desktop「Buddy加油站」每日签到领积分自动化。当需要执行每日签到、领取积分、修复签到失败、或处理「签到 401 / 已断签」类问题时使用。触发词：签到、领积分、Buddy加油站、每日签到、checkin、打卡、积分、401。
+description: WorkBuddy Desktop 的「Buddy加油站」每日签到领积分。要签到、要领积分、要查今天领没领、或者签到不明原因失效时用。触发词 签到、领积分、Buddy加油站、每日签到、checkin、打卡、积分。
 agent_created: true
 ---
 
-# WorkBuddy 每日签到（Buddy加油站领积分）
+# WorkBuddy 每日签到
 
-## Overview
+每天一百积分。接口能直接领，就不该再截图找按钮。
 
-WorkBuddy Desktop 的「Buddy加油站」每天可领 100 通用积分。2026-09-23 App 升级后，原 HTTP 直领脚本因**凭证静态加密 + Turing 设备指纹头**双重锁定而失效（网关 401）。本 skill 提供两条互补路径：
+## 现在的主路径
 
-- **自动（首选）**：OCR 驱动的 UI 自动化脚本 `scripts/wb_checkin_cua.py`，一条命令全程无人值守。
-- **手动（兜底）**：Shadow 总结的五步点击法，见 `references/manual-click-guide.md`，用于脚本失效或环境不支持时。
+脚本 vendor 在 `~/Library/Application Support/wb-signin/repo/`。上游是 88lin/workbuddy-auto-signin，commit 和 `signin.py` 的 sha256 抄在同目录的 `VERSION.txt` 里。不自动更新，要升级先看 diff 再决定。
 
-## 前置依赖
+launchd 任务 `com.workbuddy.signin` 负责触发，登录时一次，每天上午九点一次，跑的都是 `signin.py auto`。日志在 `~/Library/Logs/wb-signin.log`，报错在 `~/Library/Logs/wb-signin.err`。
 
-- **cua-mcp skill**（截图/鼠标/窗口控制），脚本会自动在同级目录或 `~/.workbuddy/skills/cua-mcp` 查找。
-- **tesseract** + `chi_sim` 语言包（OCR 中文按钮）：`brew install tesseract tesseract-lang`。
-- **辅助功能权限**（点击的必要条件）：系统设置 → 隐私与安全性 → 辅助功能 → 打开执行终端/IDE。缺失时点击静默落空，脚本启动自检会拦截并提示。
-- WorkBuddy Desktop 已登录且窗口可见（未被其他窗口完全遮挡）。
+为什么不是零点零五。这台机器那个点几乎都在睡觉或者锁着屏，一切依赖屏幕或者依赖准点的方案到这儿都会失效。挪到登录时和九点，夜里错过的由 launchd 在唤醒后补跑，一天两次足够覆盖。
 
-## 不处理（负面触发）
-
-以下场景**不属于**本 skill，别强行套用：
-- WorkBuddy 登录失效/账号问题 → 引导用户重新登录。
-- 积分规则、活动期数、奖励额度咨询 → 以 App 内展示为准。
-- 离线解密 accessToken / 还原旧 HTTP 脚本 → 已验证不可行，见背景文档。
-
-## Workflow Decision Tree
-
-```
-要签到
-  ├─ 跑脚本（首选）→ scripts/wb_checkin_cua.py
-  │   ├─ exit=0 → 成功或今日已签（幂等）
-  │   ├─ exit=1 → 看 ~/.workbuddy/logs/wb_checkin_cua.log + wb_checkin_shots/ 截图排查
-  │   └─ 排查后仍失败 → 走手动兜底
-  └─ 手动兜底 → references/manual-click-guide.md 五步法
-```
-
-## 自动模式（首选）
-
-### 直接执行
+巡检只有一个动作
 
 ```bash
-~/.workbuddy/skills/cua-mcp/.venv/bin/python3 \
-  ~/.workbuddy/skills/workbuddy-checkin/scripts/wb_checkin_cua.py
+tail -1 ~/Library/Logs/wb-signin.log
 ```
 
-### 脚本行为
+`needs_attention` 是 false 就算过。连着两天 true 再叫人，那种情形多半是客户端升级把解密链路弄断了，重试没用。
 
-1. 激活 WorkBuddy，动态取窗口 bounds（多屏/挪窗自适应）。
-2. 点左下角头像 → OCR 找「Buddy加油站」菜单项并点击。
-3. 等签到面板出现（重试 4 次 × 2.5s），OCR 找「立即领取」并点击。
-4. 验证「已领N天」出现且「立即领取」消失 → exit 0。
-5. 若一开始就是「已领N天」→ 幂等跳过 → exit 0。
+## 解释器别乱换
 
-### 退出码
+必须用 `/usr/bin/python3`，本机是 3.9.6。同一份脚本换 3.14.7 跑，卡三分钟一个字节都不吐，最后也没结果。这不是网络慢，是它自己的毛病。plist 里已经写死 3.9.6，不要顺手升级。
 
-| 码 | 含义 |
-|---|---|
-| 0 | 签到成功，或今日已签（幂等） |
-| 1 | 失败（看日志和截图定位卡点） |
+## 两条旧结论是错的
 
-### 日志与排查
+这个 skill 早先写着「HTTP 路线已死」，理由是接口强制 Turing 设备指纹头，外加 accessToken 加密解不开。两条都被实测推翻了，别再引用。
 
-- 日志：`~/.workbuddy/logs/wb_checkin_cua.log`（每次追加）
-- 截图：`~/.workbuddy/logs/wb_checkin_shots/`，文件名带运行批次前缀（`YYYYMMDD-HHMMSS-pre/menu/panel0-3/verify`），自动只保留最近 3 次，用于定位卡在哪一步。
+指纹头那条，字段根本不用带。`/v2/billing/meter/checkin-activity-status` 不带它照样返回 200。
 
-### 已知坑（调参时参考）
+解密那条，离线确实解不出，密钥在客户端 native 层。但没必要离线解。借客户端自己的 Electron 运行时，`process._linkedBinding('electron_browser_workbuddy_storage').loggerGet()` 能把 at-rest 密钥取出来，在同一进程里做 AES-256-GCM 解密。密钥不出进程，明文 token 不落盘。这是正路。
 
-- ⚠️ **「OK: already」假阳性（2026-09-26 实测）**：卡片上「已领N天 | 累计领取N分」是**累计统计行**，领取前就显示在卡上。脚本的 already 分支（找不到「立即领取」→ 查「已领N天」）会把它误判成"今日已签"直接跳过——实际按钮还没点。复核必须看**三判据**：按钮消失（变「今日已领」灰钮）+ 天数 +1 + 累积分 +100；只看「已领N天」存在不算数。修复方向：already 分支前先确认「立即领取」按钮确实不在屏上（OCR 漏读按钮时可用几何定位兜底：卡片锚点行「Buddy加油站·9期」中心 +33px、x=66 侧栏内）。
-- `ocr_words` 的 upscale 必须是 int（PIL resize 不接受 float）。
-- 签到面板小字用 **2x** 放大 OCR，4x 会把字打散反而识别失败。
-- 行首图标会被 OCR 误识别成杂词（如「抱」），`find_phrase` 用滑动起点跳过。
-- 点菜单前先点主区域空白，关掉可能残留的签到气泡。
-- 窗口坐标每次运行时动态获取，不硬编码；多屏场景 X 可能 > 主屏宽度，属正常。
+## 兜底两条，都需要人在场
 
-## 手动兜底
+接口哪天真的挂了，才轮到这两条。
 
-脚本失效或环境不支持时，按 `references/manual-click-guide.md` 的五步法手动点：取窗口坐标 → 整窗截图找卡片 → 区域放大算按钮中心 → 点击 → 截图复核（文案+天数+累计分三判据）。**点完必须复核，不许跳过。**
+第一条是 OCR 加鼠标，脚本 `legacy/ocr-ui/wb_checkin_cua.py`。它绕开接口，是接口失效期唯一还能领的路。代价是苛刻到几乎没法无人值守，屏幕得亮着，窗口不能被挡，辅助功能权限要开，tesseract 得装，OCR 还得认得出「立即领取」四个字。2026 年 10 月 14 到 18 号，它连着五天没成。要跑就人在跟前跑。
 
-## 定时自动化
+第二条是手动，五步点击法见 `references/manual-click-guide.md`。点完必须复核，不许跳过。
 
-用 automation 工具建每日任务，直接调脚本即可。示例（每天 01:00）：
+## 不管的事
 
-```
-prompt: 运行 ~/.workbuddy/skills/cua-mcp/.venv/bin/python3 ~/.workbuddy/skills/workbuddy-checkin/scripts/wb_checkin_cua.py，退出码 0 报成功，1 时读日志和最新截图说明卡点。
-rrule: FREQ=DAILY;BYHOUR=1;BYMINUTE=0
-```
+WorkBuddy 登录失效或者账号本身有问题，引导去重新登录，这里不做。积分规则、活动期数、奖励额度，以 App 里显示的为准，文档抄一遍只会过期。还有，别试图还原那份早就失效的纯 HTTP 老脚本，它死在凭证加密上，跟指纹头一点关系没有。
 
-## 背景：为什么旧 HTTP 脚本失效
+## 结果怎么看
 
-详见 `references/background-why-http-broken.md`。核心：accessToken 被 AES-256-GCM 静态加密（密钥在定制 Electron native 层，离线解不出），且签到接口新增强制 Turing 设备指纹头（腾讯天御 SDK 生成），裸脚本拿不到。两条路都堵死，只能走 UI 自动化。
+输出是一行 JSON。`result` 常见四种，`OK` 是刚领到，`ALREADY` 是今天早领过，`INACTIVE` 是非活动期，`AUTH_ERROR` 才是真出事。`report` 字段是给人看的一句话，`needs_attention` 是给机器看的开关。
 
-## Resources
+`auto` 除了签到，还会跑一遍成长中心，派 Buddy 出门、领旅行礼物、领任务奖、断登补登、连登兑换、开盲盒。这部分是写操作，脚本不做重试，宁可留到下一轮也不重复提交。
 
-### scripts/
-- `wb_checkin_cua.py` — OCR 驱动的全自动签到脚本（首选路径）。
+## 装和卸
 
-### references/
-- `manual-click-guide.md` — Shadow 总结的手动五步点击法（兜底路径）。
-- `background-why-http-broken.md` — 401 根因与加密方案逆向细节（仅供理解，不要试图重做离线解密）。
+装用仓库里的 `scripts/install-macos.sh`，它会 vendor 上游、校验哈希、写 plist、加载任务，最后跑一次给你看结果。
+
+卸用同一条脚本加 `uninstall`，卸载任务和 plist，数据目录留着。确认不要了再加 `--purge`。
+
+## 风险，写在明处
+
+这是逆向私有接口加借用客户端解密钥，本质是绕开产品设计。腾讯改版就失效，理论上也有账号被风控的可能。失效不会断签，因为一天有两次机会，风控就只能认。要不要继续用，是使用者的取舍，不是技术文档能替他决定的。
 
 ## 变更记录
 
-- **2026-09-24 v1.2**：Darwin Round 2 runtime 验收。修复 R5：头像点击偶尔落空、菜单展开时机不稳 → 头像点击并入重试循环（3次，逐次延长等待），App 激活后等待 1.2s→2.0s。
-- **2026-09-24 v1.1**：Darwin 优化 Round 1。新增启动自检（tesseract/辅助功能权限缺失时人话提示并引导手动兜底）；截图按批次保留最近 3 次防垃圾累积；验证改为双判据（「立即领取」消失 + 天数 +1 交叉比对）；删死代码；SKILL.md 补辅助功能权限前置与负面触发边界。
-- **2026-09-24 v1.0**：合并版首发。自动 OCR 脚本（Guy 侧）+ 手动五步法（Shadow 侧）+ 401 根因背景。
+2026-10-18 v2.0 主路径换成 HTTP 直连，vendor 上游并 pin 住 commit。实测推翻指纹头和解密两条旧结论，实测 3.14 会卡死所以固定 3.9.6。launchd 从零点零五改成登录时加九点，下线两个长期空跑的 OCR 定时任务。OCR 脚本降级为人工在场的兜底。
+
+2026-09-24 v1.2 修头像点击偶尔落空、菜单展开时机不稳。头像点击并入重试循环，每次多等一拍。
+
+2026-09-24 v1.1 加启动自检，tesseract 或者辅助功能权限缺失时说人话。截图按批次只留三次。验证改成双判据。
+
+2026-09-24 v1.0 首发，OCR 自动脚本加手动五步法。

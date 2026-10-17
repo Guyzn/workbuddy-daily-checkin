@@ -19,3 +19,19 @@ jobs:
           python-version: ${{ matrix.python-version }}
       - name: Syntax check
         run: python -m compileall -q .
+
+  shell-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Bash syntax check
+        run: |
+          for f in $(find . -name '*.sh' -not -path './.git/*'); do
+            bash -n "$f" || exit 1
+          done
+      - name: Installer must stay pinned
+        run: |
+          grep -q 'UPSTREAM_URL=' scripts/install-macos.sh
+          grep -q 'PIN_COMMIT=' scripts/install-macos.sh
+          grep -q 'PIN_SHA256=' scripts/install-macos.sh
+          test "$(grep -c 'PIN_COMMIT=' scripts/install-macos.sh)" = "1"

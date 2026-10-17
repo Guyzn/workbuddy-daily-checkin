@@ -1,0 +1,12 @@
+上游 https://github.com/88lin/workbuddy-auto-signin
+
+pin 住的 commit c5fe510adeae4ee2a7a6d498620dc9868647331c
+signin.py sha256 a5aa672b340a0c7a7d4ffd589471528e28198480d7d9838e30e0ea7da591ec44
+pin 的时间 2026-10-18
+
+这两个值和 scripts/install-macos.sh 顶部的常量必须一致，安装时会核对。
+上游有新提交不必跟，真要升先把 diff 看一遍，再同时改这三处。
+
+解释器固定 /usr/bin/python3（3.9.6）。实测 3.14.7 会卡住不返回。
+
+上游 MIT，版权归 88lin。
